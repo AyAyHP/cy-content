@@ -1,0 +1,57 @@
+name: Sync Content (Content Diff Sync)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "content/**"
+
+# 避免同一分支的并发运行
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout cy-content
+        uses: actions/checkout@v4
+        with:
+          path: cy-content
+
+      - name: Checkout cyeffer-base-theme
+        uses: actions/checkout@v4
+        with:
+          repository: AyAyHP/cyeffer-base-theme
+          path: cyeffer-base-theme
+          token: ${{ secrets.REPO_ACCESS_TOKEN }}
+
+      - name: Sync files using rsync
+        run: |
+          # 使用rsync代替find和cp命令
+          rsync -av --checksum cy-content/content/ cyeffer-base-theme/content/
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          cd cyeffer-base-theme
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add content/
+          # 检查是否有实际变更
+          if git diff --staged --quiet; then
+            echo "::set-output name=changes_detected::false"
+            echo "没有检测到需要同步的更改"
+          else
+            echo "::set-output name=changes_detected::true"
+            echo "检测到内容变更，准备提交"
+          fi
+
+      - name: Commit and push if changes exist
+        if: steps.check_changes.outputs.changes_detected == 'true'
+        run: |
+          cd cyeffer-base-theme
+          git commit -m "同步来自 cy-content 的内容更改"
+          git push origin main || { echo "推送失败，可能需要处理冲突"; exit 1; }
